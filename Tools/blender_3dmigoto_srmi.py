@@ -798,6 +798,45 @@ def import_uv_layers(mesh, obj, texcoords, flip_texcoord_v):
             for l in mesh.loops:
                 blender_uvs.data[l.index].uv = flip_uv(uvs[l.vertex_index])
 
+def new_custom_attribute_int(mesh, layer_name):
+    # vertex_layers were dropped in 4.0. Looks like attributes were added in
+    # 3.0 (to confirm), so we could probably start using them or add a
+    # migration function on older versions as well
+    if bpy.app.version >= (4, 0):
+        mesh.attributes.new(name=layer_name, type='INT', domain='POINT')
+        return mesh.attributes[layer_name]
+    else:
+        mesh.vertex_layers_int.new(name=layer_name)
+        return mesh.vertex_layers_int[layer_name]
+
+def new_custom_attribute_float(mesh, layer_name):
+    if bpy.app.version >= (4, 0):
+        # TODO: float2 and float3 could be stored directly as 'FLOAT2' /
+        # 'FLOAT_VECTOR' types (in fact, UV layers in 4.0 show up in attributes
+        # using FLOAT2) instead of saving each component as a separate layer.
+        # float4 is missing though. For now just get it working equivelently to
+        # the old vertex layers.
+        mesh.attributes.new(name=layer_name, type='FLOAT', domain='POINT')
+        return mesh.attributes[layer_name]
+    else:
+        mesh.vertex_layers_float.new(name=layer_name)
+        return mesh.vertex_layers_float[layer_name]
+
+# TODO: Refactor to prefer attributes over vertex layers even on 3.x if they exist
+def custom_attributes_int(mesh):
+    if bpy.app.version >= (4, 0):
+        return { k: v for k,v in mesh.attributes.items()
+                if (v.data_type, v.domain) == ('INT', 'POINT') }
+    else:
+        return mesh.vertex_layers_int
+
+def custom_attributes_float(mesh):
+    if bpy.app.version >= (4, 0):
+        return { k: v for k,v in mesh.attributes.items()
+                if (v.data_type, v.domain) == ('FLOAT', 'POINT') }
+    else:
+        return mesh.vertex_layers_float
+
 # This loads unknown data from the vertex buffers as vertex layers
 def import_vertex_layers(mesh, obj, vertex_layers):
     for (element_name, data) in sorted(vertex_layers.items()):
@@ -811,8 +850,7 @@ def import_vertex_layers(mesh, obj, vertex_layers):
                 layer_name = element_name
 
             if type(data[0][0]) == int:
-                mesh.vertex_layers_int.new(name=layer_name)
-                layer = mesh.vertex_layers_int[layer_name]
+                layer = new_custom_attribute_int(mesh, layer_name)
                 for v in mesh.vertices:
                     val = data[v.index][component]
                     # Blender integer layers are 32bit signed and will throw an
@@ -823,8 +861,7 @@ def import_vertex_layers(mesh, obj, vertex_layers):
                     else:
                         layer.data[v.index].value = struct.unpack('i', struct.pack('I', val))[0]
             elif type(data[0][0]) == float:
-                mesh.vertex_layers_float.new(name=layer_name)
-                layer = mesh.vertex_layers_float[layer_name]
+                layer = new_custom_attribute_float(mesh, layer_name)
                 for v in mesh.vertices:
                     layer.data[v.index].value = data[v.index][component]
             else:
@@ -991,7 +1028,7 @@ def import_3dmigoto_vb_ib(operator, context, paths, flip_texcoord_v=True, axis_f
     # Must be done after validate step:
     if use_normals:
         import_normals_step2(mesh)
-    else:
+    elif hasattr(mesh, 'calc_normals'): # Dropped in Blender 4.0
         mesh.calc_normals()
 
     link_object_to_scene(context, obj)
@@ -1034,8 +1071,8 @@ def blender_vertex_to_3dmigoto_vertex(mesh, obj, blender_loop_vertex, layout, te
         seen_offsets.add((elem.InputSlot, elem.AlignedByteOffset))
 
         if elem.name == 'POSITION':
-            if 'POSITION.w' in mesh.vertex_layers_float:
-                vertex[elem.name] = pos + [mesh.vertex_layers_float['POSITION.w'].data[blender_loop_vertex.vertex_index].value]
+            if 'POSITION.w' in custom_attributes_float(mesh):
+                vertex[elem.name] = pos + [custom_attributes_float(mesh)['POSITION.w'].data[blender_loop_vertex.vertex_index].value]
             else:
                 vertex[elem.name] = elem.pad(pos, 1.0)
         elif elem.name.startswith('COLOR'):
@@ -1089,10 +1126,10 @@ def blender_vertex_to_3dmigoto_vertex(mesh, obj, blender_loop_vertex, layout, te
             data = []
             for component in 'xyzw':
                 layer_name = '%s.%s' % (elem.name, component)
-                if layer_name in mesh.vertex_layers_int:
-                    data.append(mesh.vertex_layers_int[layer_name].data[blender_loop_vertex.vertex_index].value)
-                elif layer_name in mesh.vertex_layers_float:
-                    data.append(mesh.vertex_layers_float[layer_name].data[blender_loop_vertex.vertex_index].value)
+                if layer_name in custom_attributes_int(mesh):
+                    data.append(custom_attributes_int(mesh)[layer_name].data[blender_loop_vertex.vertex_index].value)
+                elif layer_name in custom_attributes_float(mesh):
+                    data.append(custom_attributes_float(mesh)[layer_name].data[blender_loop_vertex.vertex_index].value)
             if data:
                 #print('Retrieved unhandled semantic %s %s from vertex layer' % (elem.name, elem.Format), data)
                 vertex[elem.name] = data
@@ -1171,8 +1208,8 @@ def blender_vertex_to_3dmigoto_vertex_outline(mesh, obj, blender_loop_vertex, la
         seen_offsets.add((elem.InputSlot, elem.AlignedByteOffset))
 
         if elem.name == 'POSITION':
-            if 'POSITION.w' in mesh.vertex_layers_float:
-                vertex[elem.name] = pos + [mesh.vertex_layers_float['POSITION.w'].data[blender_loop_vertex.vertex_index].value]
+            if 'POSITION.w' in custom_attributes_float(mesh):
+                vertex[elem.name] = pos + [custom_attributes_float(mesh)['POSITION.w'].data[blender_loop_vertex.vertex_index].value]
             else:
                 vertex[elem.name] = elem.pad(pos, 1.0)
         elif elem.name.startswith('COLOR'):
@@ -1210,10 +1247,10 @@ def blender_vertex_to_3dmigoto_vertex_outline(mesh, obj, blender_loop_vertex, la
             data = []
             for component in 'xyzw':
                 layer_name = '%s.%s' % (elem.name, component)
-                if layer_name in mesh.vertex_layers_int:
-                    data.append(mesh.vertex_layers_int[layer_name].data[blender_loop_vertex.vertex_index].value)
-                elif layer_name in mesh.vertex_layers_float:
-                    data.append(mesh.vertex_layers_float[layer_name].data[blender_loop_vertex.vertex_index].value)
+                if layer_name in custom_attributes_int(mesh):
+                    data.append(custom_attributes_int(mesh)[layer_name].data[blender_loop_vertex.vertex_index].value)
+                elif layer_name in custom_attributes_float(mesh):
+                    data.append(custom_attributes_float(mesh)[layer_name].data[blender_loop_vertex.vertex_index].value)
             if data:
                 vertex[elem.name] = data
 
