@@ -8,6 +8,7 @@
 # Modified by SilentNightSound#7430 to add Genshin support and some more Genshin-specific features
 # QOL feature (ignoring hidden meshes while exporting) added by HazrateGolabi#1364
 # HummyR#8131
+# Unhardcode position and blend stride by _scyll
 
 # bl_info seems to be parsed as text outside of the normal module loading by
 # Blender, meaning we can't dynamically set the Blender version to indicate the
@@ -1732,7 +1733,47 @@ def generate_mod_folder(path, character_name, no_ramps, delete_intermediate, cre
         if component["draw_vb"]:
 
             with open(os.path.join(path, f"{current_name}{object_classifications[0]}.fmt"), "r") as f:
-                stride = int([x.split(": ")[1] for x in f.readlines() if "stride:" in x][0])
+                if not component["blend_vb"]:
+                    stride = int([x.split(": ")[1] for x in f.readlines() if "stride:" in x][0])
+                else:
+                    # Parse the fmt using existing classes instead of hard coding element stride values
+                    fmt_layout = InputLayout()
+                    for line in map(str.strip, f):
+                        if line.startswith('stride:'):
+                            fmt_layout.stride = int(line[7:])
+                        if line.startswith('element['):
+                            fmt_layout.parse_element(f)
+
+                    position_stride = sum([
+                        element.size()
+                        for element in fmt_layout
+                        if element.SemanticName == "POSITION"
+                        or element.SemanticName == "NORMAL"
+                        or element.SemanticName == "TANGENT"
+                    ])
+
+                    blend_stride = sum([
+                        element.size()
+                        for element in fmt_layout
+                        if element.SemanticName == "BLENDWEIGHTS"
+                        or element.SemanticName == "BLENDWEIGHT"
+                        or element.SemanticName == "BLENDINDICES"
+                    ])
+
+                    texcoord_stride = sum([
+                        element.size()
+                        for element in fmt_layout
+                        if element.SemanticName == "COLOR"
+                        or element.SemanticName == "TEXCOORD"
+                    ])
+
+                    stride = position_stride + blend_stride + texcoord_stride
+                    print("\tPosition Stride:", position_stride)
+                    print("\tBlend Stride:", blend_stride)
+                    print("\tTexcoord Stride:", texcoord_stride)
+                    print("\tStride:", stride)
+
+                    assert(fmt_layout.stride == stride)
 
             offset = 0
             position, blend, texcoord = bytearray(), bytearray(), bytearray()
@@ -1748,13 +1789,12 @@ def generate_mod_folder(path, character_name, no_ramps, delete_intermediate, cre
                 if component["blend_vb"]:
                     print("Splitting VB by buffer type, merging body parts")
                     try:
-                        x, y, z = collect_vb(path, current_name, current_object, stride)
+                        x, y, z = collect_vb(path, current_name, current_object, (position_stride, blend_stride, texcoord_stride))
                     except:
                         raise Fatal(f"ERROR: Unable to find {current_name} {current_object} when exporting. Double check the object exists and is named correctly")
                     position += x
                     blend += y
                     texcoord += z
-                    position_stride = 40
 
                 # This is the path for components without blend data (simple weapons, objects, etc.)
                 # Simplest route since we do not need to split up the buffer into multiple components
@@ -1840,9 +1880,9 @@ def generate_mod_folder(path, character_name, no_ramps, delete_intermediate, cre
                 vb_override_ini += f"[TextureOverride{current_name}Texcoord]\nhash = {component['texcoord_vb']}\nvb1 = Resource{current_name}Texcoord\n\n"
                 vb_override_ini += f"[TextureOverride{current_name}VertexLimitRaise]\nhash = {component['draw_vb']}\n\n"
 
-                vb_res_ini += f"[Resource{current_name}Position]\ntype = Buffer\nstride = 40\nfilename = {current_name}Position.buf\n\n"
-                vb_res_ini += f"[Resource{current_name}Blend]\ntype = Buffer\nstride = 32\nfilename = {current_name}Blend.buf\n\n"
-                vb_res_ini += f"[Resource{current_name}Texcoord]\ntype = Buffer\nstride = {stride - 72}\nfilename = {current_name}Texcoord.buf\n\n"
+                vb_res_ini += f"[Resource{current_name}Position]\ntype = Buffer\nstride = {position_stride}\nfilename = {current_name}Position.buf\n\n"
+                vb_res_ini += f"[Resource{current_name}Blend]\ntype = Buffer\nstride = {blend_stride}\nfilename = {current_name}Blend.buf\n\n"
+                vb_res_ini += f"[Resource{current_name}Texcoord]\ntype = Buffer\nstride = {texcoord_stride}\nfilename = {current_name}Texcoord.buf\n\n"
             else:
                 with open(os.path.join(parent_folder, f"{character_name}Mod", f"{current_name}.buf"), "wb") as f:
                     f.write(position)
@@ -1942,20 +1982,22 @@ def create_mod_folder(parent_folder, name):
     else:
         print(f"WARNING: Everything currently in the {name}Mod folder will be overwritten - make sure any important files are backed up. Press any button to continue")
 
-def collect_vb(folder, name, classification, stride): 
+def collect_vb(folder, name, classification, stride):
+    position_stride, blend_stride, texcoord_stride = stride
     position = bytearray()
     blend = bytearray()
     texcoord = bytearray()
     with open(os.path.join(folder, f"{name}{classification}.vb"), "rb") as f:
         data = f.read()
         data = bytearray(data)
-        i = 0
-        while i < len(data):
-            import binascii
-            position += data[i:i+40]
-            blend += data[i+40:i+72]
-            texcoord += data[i+72:i+stride]
-            i += stride
+        while 0 < len(data):
+            a, data = data[:position_stride], data[position_stride:]
+            b, data = data[:blend_stride],    data[blend_stride:]
+            c, data = data[:texcoord_stride], data[texcoord_stride:]
+
+            position += a
+            blend += b
+            texcoord += c
     return position, blend, texcoord
 
 
