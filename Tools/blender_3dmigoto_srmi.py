@@ -2027,14 +2027,13 @@ def collect_vb(folder, name, classification, stride):
     with open(os.path.join(folder, f"{name}{classification}.vb"), "rb") as f:
         data = f.read()
         data = bytearray(data)
-        while 0 < len(data):
-            a, data = data[:position_stride], data[position_stride:]
-            b, data = data[:blend_stride],    data[blend_stride:]
-            c, data = data[:texcoord_stride], data[texcoord_stride:]
+        i = 0
+        while i < len(data):
+            position += data[i                               : i+(position_stride)]
+            blend    += data[i+(position_stride)             : i+(position_stride+blend_stride)]
+            texcoord += data[i+(position_stride+blend_stride): i+(position_stride+blend_stride+texcoord_stride)]
+            i += position_stride+blend_stride+texcoord_stride
 
-            position += a
-            blend += b
-            texcoord += c
     return position, blend, texcoord
 
 
