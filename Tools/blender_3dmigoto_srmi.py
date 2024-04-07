@@ -1781,28 +1781,19 @@ def generate_mod_folder(path, character_name, no_ramps, delete_intermediate, cre
                         if line.startswith('element['):
                             fmt_layout.parse_element(f)
 
-                    position_stride = sum([
-                        element.size()
-                        for element in fmt_layout
-                        if element.SemanticName == "POSITION"
-                        or element.SemanticName == "NORMAL"
-                        or element.SemanticName == "TANGENT"
-                    ])
+                    position_stride = 0
+                    blend_stride = 0
+                    texcoord_stride = 0
 
-                    blend_stride = sum([
-                        element.size()
-                        for element in fmt_layout
-                        if element.SemanticName == "BLENDWEIGHTS"
-                        or element.SemanticName == "BLENDWEIGHT"
-                        or element.SemanticName == "BLENDINDICES"
-                    ])
+                    for element in fmt_layout:
+                        if element.SemanticName in ["POSITION", "NORMAL", "TANGENT"]:
+                            position_stride += element.size()
 
-                    texcoord_stride = sum([
-                        element.size()
-                        for element in fmt_layout
-                        if element.SemanticName == "COLOR"
-                        or element.SemanticName == "TEXCOORD"
-                    ])
+                        elif element.SemanticName in ["BLENDWEIGHT", "BLENDWEIGHTS", "BLENDINDICES"]:
+                            blend_stride += element.size()
+
+                        elif element.SemanticName in ["COLOR", "TEXCOORD"]:
+                            texcoord_stride += element.size()
 
                     stride = position_stride + blend_stride + texcoord_stride
                     print("\tPosition Stride:", position_stride)
